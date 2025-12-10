@@ -1,0 +1,5 @@
+{
+  "name": "NeuroSeeker 3D",
+  "description": "An autonomous agent simulation where a robot navigates a 3D environment using pure visual recognition (powered by Gemini 2.5 Flash) to find geometric targets.",
+  "requestFramePermissions": []
+}
