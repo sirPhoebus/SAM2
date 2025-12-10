@@ -6,7 +6,7 @@ import { ActionType, LogEntry, TargetShape, VisionResponse } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { Activity, Radio, Eye, Disc, Square, Triangle, Box, Send, Brain, Target } from 'lucide-react';
 
-const TARGET_OPTIONS: TargetShape[] = ['Red Cube', 'Pink Sphere', 'Green Cone', 'Yellow Cylinder'];
+const TARGET_OPTIONS: TargetShape[] = ['Red Cube', 'Pink Sphere', 'Green Cone', 'Yellow Cylinder', 'Orange Pyramid', 'Skeleton Head'];
 
 export default function App() {
   const [selectedTarget, setSelectedTarget] = useState<TargetShape>(TARGET_OPTIONS[0]);
@@ -110,11 +110,24 @@ export default function App() {
       const mission = await llmService.parseMission(missionInput, TARGET_OPTIONS);
       setCurrentMission(mission);
       
-      if (mission.steps.length > 0) {
+      // Check if mission has status 'help' (empty targets)
+      if ((mission as any).status === 'help') {
+        addLog(`I did not find the shape or form in your last message.`, 'error');
+        addLog(`Available shapes: ${TARGET_OPTIONS.join(', ')}`, 'info');
+        setCurrentMission(null);
+      } else if (mission.steps.length > 0) {
         const firstTarget = mission.steps[0].target;
         setSelectedTarget(firstTarget);
         addLog(`Mission parsed: ${mission.steps.length} step(s). First target: ${firstTarget}`, 'info');
         addLog(`Mission steps: ${mission.steps.map(s => s.target).join(' → ')}`, 'info');
+        
+        // Auto-start the mission when LLM chat is sent
+        if (!isRunning) {
+          setIsRunning(true);
+          setAgentAction(ActionType.IDLE);
+          setVisionData(null);
+          addLog(`Auto-starting mission execution: ${mission.steps.map(s => s.target).join(' → ')}`, 'info');
+        }
       }
     } catch (error) {
       addLog(`Mission parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
@@ -301,15 +314,6 @@ export default function App() {
                              Step {index + 1}: Navigate to target
                            </div>
                          </div>
-                         {index === currentMission.current_step && (
-                           <button
-                             onClick={handleNextStep}
-                             disabled={isRunning}
-                             className="text-xs px-2 py-1 bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-800 rounded"
-                           >
-                             Next
-                           </button>
-                         )}
                        </div>
                      ))}
                    </div>

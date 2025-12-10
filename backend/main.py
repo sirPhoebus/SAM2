@@ -66,6 +66,10 @@ def process_with_sam2(image: np.ndarray, target_description: str):
         "Pink Sphere": ([140, 50, 50], [170, 255, 255]),  # Pink/Magenta range
         "Green Cone": ([35, 30, 30], [85, 255, 255]),  # Expanded green range
         "Yellow Cylinder": ([15, 80, 80], [35, 255, 255]),  # Expanded yellow range
+        "Blue Donut": ([90, 50, 50], [130, 255, 255]),  # Blue range
+        "Zebra": ([0, 0, 100], [180, 30, 255]),  # White/Gray range (low saturation)
+        "Ship": ([0, 0, 50], [180, 50, 150]),  # Gray range
+        "Skeleton Head": ([0, 0, 150], [180, 50, 255]),  # Light gray/white range
     }
     
     target_color = None

@@ -29,4 +29,4 @@ export interface LogEntry {
   type: 'info' | 'action' | 'vision' | 'error';
 }
 
-export type TargetShape = 'Red Cube' | 'Pink Sphere' | 'Green Cone' | 'Yellow Cylinder';
+export type TargetShape = 'Red Cube' | 'Pink Sphere' | 'Green Cone' | 'Yellow Cylinder' | 'Orange Pyramid' | 'Skeleton Head';

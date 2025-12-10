@@ -25,47 +25,231 @@ const targets = [
   { type: 'Pink Sphere', color: '#ff69b4', position: [-4, 0.5, 4], geometry: 'sphere' },
   { type: 'Green Cone', color: '#00ff40', position: [2, 0.5, -6], geometry: 'cone' },
   { type: 'Yellow Cylinder', color: '#ffd700', position: [-6, 0.5, -2], geometry: 'cylinder' },
+  { type: 'Orange Pyramid', color: '#ff8800', position: [8, 0.5, -4], geometry: 'pyramid' },
+  { type: 'Skeleton Head', color: '#f0f0f0', position: [6, 0.5, -8], geometry: 'skeleton' },
 ] as const;
 
-const TargetObject: React.FC<{ data: typeof targets[number]; isSelected: boolean }> = ({ data, isSelected }) => {
+const TargetObject: React.FC<{ 
+  data: typeof targets[number]; 
+  isSelected: boolean;
+  onTargetReached?: () => void;
+  agentPosition?: [number, number, number];
+  agentAction?: ActionType;
+}> = ({ data, isSelected, onTargetReached, agentPosition, agentAction }) => {
   const meshRef = useRef<THREE.Mesh>(null);
+  const groupRef = useRef<THREE.Group>(null);
+  const [isExploding, setIsExploding] = useState(false);
+  const [explosionProgress, setExplosionProgress] = useState(0);
+  const [isDestroyed, setIsDestroyed] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<[number, number] | null>(null);
+  const [position, setPosition] = useState<[number, number, number]>(data.position as [number, number, number]);
   
+  // Check if target is reached (selected and agent is close OR agent has stopped)
+  useEffect(() => {
+    if (isSelected && onTargetReached && !isExploding && agentPosition) {
+      // Calculate distance between agent and target
+      const [ax, ay, az] = agentPosition;
+      const [tx, ty, tz] = position;
+      const distance = Math.sqrt((ax - tx) ** 2 + (ay - ty) ** 2 + (az - tz) ** 2);
+      
+      // Trigger explosion if agent is close to target
+      // Use more generous distance for mission targets
+      const shouldExplode = distance < 2.0; // 2.0 units is generous enough
+      
+      // If agent is VERY close (inside object), force explosion immediately
+      if (distance < 0.3) {
+        setIsExploding(true);
+        onTargetReached();
+        return;
+      }
+      
+      if (shouldExplode) {
+        // Simulate target reached after a delay
+        const timer = setTimeout(() => {
+          setIsExploding(true);
+          onTargetReached();
+        }, 500);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isSelected, onTargetReached, isExploding, agentPosition, position, agentAction]);
+
+  // Handle explosion animation
   useFrame((state) => {
-    if (meshRef.current) {
+    if (meshRef.current && !isDestroyed) {
       // Only rotate if this target is selected
-      if (isSelected) {
+      if (isSelected && !isExploding) {
         meshRef.current.rotation.y += 0.01;
       }
       meshRef.current.position.y = 0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.1;
+      
+      // Handle explosion animation
+      if (isExploding) {
+        setExplosionProgress(prev => Math.min(prev + 0.05, 1));
+        if (meshRef.current) {
+          meshRef.current.scale.setScalar(1 + explosionProgress * 2);
+          const material = meshRef.current.material as THREE.MeshStandardMaterial;
+          material.opacity = 1 - explosionProgress;
+          material.emissiveIntensity = 0.5 + explosionProgress * 3;
+        }
+        
+        // Mark as destroyed after explosion completes
+        if (explosionProgress >= 1) {
+          setIsExploding(false);
+          setIsDestroyed(true);
+          setExplosionProgress(0);
+        }
+      }
     }
   });
 
+  // Handle click for dragging
+  const handleClick = (event: any) => {
+    event.stopPropagation();
+    setIsDragging(true);
+    setDragStart([event.point.x, event.point.z]);
+  };
+
+  // Handle drag movement
+  useEffect(() => {
+    if (!isDragging || !dragStart || !groupRef.current) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (groupRef.current) {
+        const newX = position[0] + (e.movementX * 0.1);
+        const newZ = position[2] + (e.movementY * 0.1);
+        setPosition([newX, position[1], newZ]);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      setDragStart(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragStart, position]);
+
+  // Create geometry based on type
+  const getGeometry = () => {
+    switch (data.geometry) {
+      case 'box':
+        return <boxGeometry args={[1, 1, 1]} />;
+      case 'sphere':
+        return <sphereGeometry args={[0.6, 32, 32]} />;
+      case 'cone':
+        return <coneGeometry args={[0.6, 1.2, 32]} />;
+      case 'cylinder':
+        return <cylinderGeometry args={[0.5, 0.5, 1, 32]} />;
+      case 'pyramid':
+        // Tetrahedron (pyramid) geometry
+        return <tetrahedronGeometry args={[0.7]} />;
+      case 'skeleton':
+        // Skeleton head (skull shape)
+        return (
+          <>
+            <sphereGeometry args={[0.5, 32, 32]} />
+            {/* Eye sockets */}
+            <mesh position={[0.2, 0.1, 0.4]}>
+              <sphereGeometry args={[0.1, 16, 16]} />
+              <meshStandardMaterial color="#000000" />
+            </mesh>
+            <mesh position={[-0.2, 0.1, 0.4]}>
+              <sphereGeometry args={[0.1, 16, 16]} />
+              <meshStandardMaterial color="#000000" />
+            </mesh>
+          </>
+        );
+      default:
+        return <boxGeometry args={[1, 1, 1]} />;
+    }
+  };
+
+  // Don't render anything if destroyed
+  if (isDestroyed) {
+    return null;
+  }
+
   return (
-    <group position={data.position as [number, number, number]}>
-        <mesh ref={meshRef} castShadow receiveShadow>
-          {data.geometry === 'box' && <boxGeometry args={[1, 1, 1]} />}
-          {data.geometry === 'sphere' && <sphereGeometry args={[0.6, 32, 32]} />}
-          {data.geometry === 'cone' && <coneGeometry args={[0.6, 1.2, 32]} />}
-          {data.geometry === 'cylinder' && <cylinderGeometry args={[0.5, 0.5, 1, 32]} />}
-          <meshStandardMaterial color={data.color} emissive={data.color} emissiveIntensity={0.5} />
-        </mesh>
-        <pointLight color={data.color} distance={3} intensity={5} />
+    <group 
+      ref={groupRef} 
+      position={position}
+      onClick={handleClick}
+    >
+      <mesh 
+        ref={meshRef} 
+        castShadow 
+        receiveShadow
+      >
+        {getGeometry()}
+        <meshStandardMaterial 
+          color={data.color} 
+          emissive={data.color} 
+          emissiveIntensity={0.5}
+          transparent={isExploding}
+        />
+      </mesh>
+      
+      {/* Arrow indicators for dragging */}
+      {isDragging && (
+        <>
+          {/* X-axis arrow (red) */}
+          <arrowHelper
+            args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 0), 0.5, 0xff0000]}
+            position={[0.8, 0, 0]}
+          />
+          {/* Z-axis arrow (blue) */}
+          <arrowHelper
+            args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 1), 0.5, 0x0000ff]}
+            position={[0, 0, 0.8]}
+          />
+        </>
+      )}
+      
+      {/* Explosion particles */}
+      {isExploding && (
+        <points>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              count={50}
+              array={new Float32Array(Array.from({ length: 150 }, () => (Math.random() - 0.5) * 3))}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <pointsMaterial
+            color={data.color}
+            size={0.1}
+            transparent
+            opacity={1 - explosionProgress}
+          />
+        </points>
+      )}
+      
+      <pointLight color={data.color} distance={3} intensity={5} />
     </group>
   );
 };
 
 // The "Physical" Agent in the world
-const Agent = ({ 
-  action, 
-  onUpdateCamera,
-  targetPosition,
-  confidence = 0.0
-}: { 
+const Agent = React.forwardRef<THREE.Group, { 
   action: ActionType, 
   onUpdateCamera: (cam: THREE.Camera) => void,
   targetPosition: [number, number, number] | null,
   confidence: number
-}) => {
+}>(({ 
+  action, 
+  onUpdateCamera,
+  targetPosition,
+  confidence = 0.0
+}, ref) => {
   const groupRef = useRef<THREE.Group>(null);
   const camRef = useRef<THREE.PerspectiveCamera>(null);
   
@@ -120,7 +304,7 @@ const Agent = ({
           initialDistanceToTarget.current = distanceToTarget;
           // Ensure minimum straight line distance of 2.0 units to make it noticeable
           straightLineDistance.current = Math.max(2.0, distanceToTarget * 0.5); // 50% of remaining distance, min 2.0
-          console.log(`ENTERING STRAIGHT LINE MODE: distance=${distanceToTarget.toFixed(2)}, straightLineDistance=${straightLineDistance.current.toFixed(2)}`);
+          // Reduced logging for performance
         }
         
         if (straightLineMode.current && straightLineDistance.current > 0) {
@@ -151,9 +335,6 @@ const Agent = ({
           if (straightLineDistance.current <= 0) {
             // Exit straight line mode
             straightLineMode.current = false;
-            console.log(`EXITING STRAIGHT LINE MODE: moved ${(initialDistanceToTarget.current - distanceToTarget).toFixed(2)} units`);
-          } else {
-            console.log(`STRAIGHT LINE MODE: remaining=${straightLineDistance.current.toFixed(2)}, velocity=${velocity.current.toFixed(2)}`);
           }
         } else {
           // Normal physics-based movement calculation
@@ -309,6 +490,16 @@ const Agent = ({
            <meshBasicMaterial color={eyeColor} toneMapped={false} />
         </mesh>
         
+        {/* Antenna on top */}
+        <mesh position={[0, 0.2, 0]} castShadow>
+          <cylinderGeometry args={[0.02, 0.02, 0.3]} />
+          <meshStandardMaterial color="#00ccff" emissive="#00ccff" emissiveIntensity={0.5} />
+        </mesh>
+        <mesh position={[0, 0.35, 0]} castShadow>
+          <sphereGeometry args={[0.04, 16, 16]} />
+          <meshStandardMaterial color="#00ffff" emissive="#00ffff" emissiveIntensity={1.0} />
+        </mesh>
+        
         {/* The actual camera the agent "sees" through */}
         <PerspectiveCamera 
             ref={camRef} 
@@ -322,9 +513,33 @@ const Agent = ({
             far={30}
         />
       </group>
+      
+      {/* Light Beams - Cosmetic search lights */}
+      <group>
+        {/* Left light beam */}
+        <mesh position={[0.2, 0.5, -0.1]} rotation={[0, Math.PI / 12, 0]}>
+          <coneGeometry args={[0.05, 0.8, 8]} />
+          <meshBasicMaterial color="#00ffff" transparent opacity={0.3} side={THREE.BackSide} />
+        </mesh>
+        <pointLight position={[0.2, 0.5, -0.1]} color="#00ffff" distance={3} intensity={0.5} />
+        
+        {/* Right light beam */}
+        <mesh position={[-0.2, 0.5, -0.1]} rotation={[0, -Math.PI / 12, 0]}>
+          <coneGeometry args={[0.05, 0.8, 8]} />
+          <meshBasicMaterial color="#00ffff" transparent opacity={0.3} side={THREE.BackSide} />
+        </mesh>
+        <pointLight position={[-0.2, 0.5, -0.1]} color="#00ffff" distance={3} intensity={0.5} />
+        
+        {/* Center forward light beam */}
+        <mesh position={[0, 0.5, -0.1]} rotation={[0, 0, 0]}>
+          <coneGeometry args={[0.06, 1.0, 8]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.2} side={THREE.BackSide} />
+        </mesh>
+        <pointLight position={[0, 0.5, -0.1]} color="#ffffff" distance={4} intensity={0.8} />
+      </group>
     </group>
   );
-};
+});
 
 // Scene Manager to handle off-screen rendering for "Vision"
 const SceneManager = ({ 
@@ -406,11 +621,44 @@ const OrbitControlsWrapper = () => {
     return <OrbitControls makeDefault />;
 }
 
-export const SimulationWorld: React.FC<SimulationWorldProps> = (props) => {
-  const agentCamRef = useRef<THREE.Camera | null>(null);
+// Agent position context to share agent position with targets
+const AgentPositionContext = React.createContext<[number, number, number] | null>(null);
+
+const SimulationWorldInner: React.FC<SimulationWorldProps & { agentCamRef: React.RefObject<THREE.Camera | null> }> = (props) => {
+  const agentGroupRef = useRef<THREE.Group>(null);
+  const [agentPosition, setAgentPosition] = useState<[number, number, number]>([0, 0, 0]);
+  const [destroyedTargets, setDestroyedTargets] = useState<Set<string>>(new Set());
+
+  // Update agent position on each frame
+  useFrame(() => {
+    if (agentGroupRef.current) {
+      const pos = agentGroupRef.current.position;
+      setAgentPosition([pos.x, pos.y, pos.z]);
+    }
+  });
+
+  // Check if target is mentioned in chat to respawn it
+  useEffect(() => {
+    // When target changes (via chat), check if it's destroyed and respawn it
+    if (props.target && destroyedTargets.has(props.target)) {
+      // Respawn this target
+      setDestroyedTargets(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(props.target);
+        return newSet;
+      });
+      // Reduced logging for performance
+    }
+  }, [props.target, destroyedTargets]);
+
+  const handleTargetReached = (targetType: string) => {
+    // Mark target as destroyed
+    setDestroyedTargets(prev => new Set(prev).add(targetType));
+    // Reduced logging for performance
+  };
 
   return (
-    <Canvas shadows className="bg-black">
+    <AgentPositionContext.Provider value={agentPosition}>
       <PerspectiveCamera makeDefault position={[0, 15, 15]} fov={50} />
       <OrbitControlsWrapper />
       
@@ -431,19 +679,29 @@ export const SimulationWorld: React.FC<SimulationWorldProps> = (props) => {
       <Grid infiniteGrid sectionSize={3} cellColor="#444" sectionColor="#00ccff" fadeDistance={30} />
 
       {/* Targets */}
-      {targets.map((t, i) => (
-        <TargetObject 
-          key={i} 
-          data={t} 
-          isSelected={props.target === t.type}
-        />
-      ))}
+      {targets.map((t, i) => {
+        // Skip destroyed targets
+        if (destroyedTargets.has(t.type)) {
+          return null;
+        }
+        return (
+          <TargetObject 
+            key={i} 
+            data={t} 
+            isSelected={props.target === t.type}
+            agentPosition={agentPosition}
+            agentAction={props.agentAction}
+            onTargetReached={() => handleTargetReached(t.type)}
+          />
+        );
+      })}
 
       {/* Agent */}
       <Agent 
+        ref={agentGroupRef}
         action={props.agentAction} 
-        onUpdateCamera={(cam) => { agentCamRef.current = cam; }}
-        targetPosition={targets.find(t => t.type === props.target)?.position as [number, number, number] || null}
+        onUpdateCamera={(cam) => { props.agentCamRef.current = cam; }}
+        targetPosition={targets.find(t => t.type === props.target && !destroyedTargets.has(t.type))?.position as [number, number, number] || null}
         confidence={props.confidence || 0.0}
       />
 
@@ -452,8 +710,18 @@ export const SimulationWorld: React.FC<SimulationWorldProps> = (props) => {
         isRunning={props.isRunning} 
         onCaptureFrame={props.onCaptureFrame} 
         agentAction={props.agentAction}
-        agentCamRef={agentCamRef}
+        agentCamRef={props.agentCamRef}
       />
+    </AgentPositionContext.Provider>
+  );
+};
+
+export const SimulationWorld: React.FC<SimulationWorldProps> = (props) => {
+  const agentCamRef = useRef<THREE.Camera | null>(null);
+
+  return (
+    <Canvas shadows className="bg-black">
+      <SimulationWorldInner {...props} agentCamRef={agentCamRef} />
     </Canvas>
   );
 };

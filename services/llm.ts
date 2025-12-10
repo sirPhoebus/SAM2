@@ -52,6 +52,9 @@ export class LLMService {
    */
   async parseMission(missionText: string, availableTargets: TargetShape[]): Promise<ChainedMission> {
     try {
+      // Use the specific model the user wants
+      let modelToUse = 'google/gemma-3n-e4b';
+      
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -59,7 +62,7 @@ export class LLMService {
           ...(this.apiKey && { 'Authorization': `Bearer ${this.apiKey}` })
         },
         body: JSON.stringify({
-          model: 'google/gemma-3n-e4b',
+          model: modelToUse,
           messages: [
             {
               role: 'system',
@@ -86,7 +89,7 @@ export class LLMService {
             }
           ],
           temperature: 0.1,
-          response_format: { type: "json_object" }
+          max_tokens: 100
         })
       });
 
@@ -95,10 +98,42 @@ export class LLMService {
       }
 
       const data = await response.json();
-      const content = data.choices[0].message.content;
-      const parsed = JSON.parse(content);
+      
+      // Handle different response formats
+      let content = '';
+      if (data.choices && data.choices[0] && data.choices[0].message) {
+        content = data.choices[0].message.content;
+      } else if (data.content) {
+        content = data.content;
+      } else {
+        throw new Error('Invalid response format from LLM API');
+      }
+      
+      // Try to parse JSON, handle if it's not pure JSON
+      let parsed;
+      try {
+        // Extract JSON from response if it contains other text
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          content = jsonMatch[0];
+        }
+        parsed = JSON.parse(content);
+      } catch (parseError) {
+        throw new Error(`Failed to parse LLM response`);
+      }
 
       const targets = parsed.targets || [];
+      
+      // Check if targets array is empty
+      if (targets.length === 0) {
+        // Return a special mission that will trigger a help message
+        return {
+          id: `help_mission_${Date.now()}`,
+          steps: [],
+          current_step: 0,
+          status: 'help' as any // Special status for help message
+        };
+      }
       
       return {
         id: `mission_${Date.now()}`,
@@ -112,8 +147,6 @@ export class LLMService {
       };
 
     } catch (error) {
-      console.error('LLM mission parsing failed:', error);
-      
       // Fallback: simple keyword-based parsing
       return this.fallbackParseMission(missionText, availableTargets);
     }
@@ -126,7 +159,7 @@ export class LLMService {
     const steps: MissionStep[] = [];
     const text = missionText.toLowerCase();
     
-    // Simple keyword matching
+    // Simple keyword matching for ALL targets
     if (text.includes('sphere') || text.includes('pink')) {
       steps.push({
         target: 'Pink Sphere',
@@ -159,13 +192,44 @@ export class LLMService {
       });
     }
     
-    // If no specific targets mentioned, use all in order
-    if (steps.length === 0) {
-      steps.push(...availableTargets.map(target => ({
-        target,
-        condition: 'reached' as const,
+    if (text.includes('pyramid') || text.includes('orange') || text.includes('triangle')) {
+      steps.push({
+        target: 'Orange Pyramid',
+        condition: 'reached',
         actions: [ActionType.SCAN, ActionType.FORWARD, ActionType.STOP]
-      })));
+      });
+    }
+    
+    if (text.includes('skeleton') || text.includes('skull') || text.includes('head') || text.includes('bone')) {
+      steps.push({
+        target: 'Skeleton Head',
+        condition: 'reached',
+        actions: [ActionType.SCAN, ActionType.FORWARD, ActionType.STOP]
+      });
+    }
+    
+    // If no specific targets mentioned, use the FIRST mentioned target or default to first available
+    if (steps.length === 0) {
+      // Try to find any target mention
+      for (const target of availableTargets) {
+        if (text.includes(target.toLowerCase().split(' ')[0])) {
+          steps.push({
+            target,
+            condition: 'reached' as const,
+            actions: [ActionType.SCAN, ActionType.FORWARD, ActionType.STOP]
+          });
+          break;
+        }
+      }
+      
+      // If still no matches, use just the first target (not all!)
+      if (steps.length === 0 && availableTargets.length > 0) {
+        steps.push({
+          target: availableTargets[0],
+          condition: 'reached' as const,
+          actions: [ActionType.SCAN, ActionType.FORWARD, ActionType.STOP]
+        });
+      }
     }
 
     return {
