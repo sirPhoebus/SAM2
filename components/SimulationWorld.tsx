@@ -116,8 +116,8 @@ const TargetObject: React.FC<{
 
     const handleMouseMove = (e: MouseEvent) => {
       if (groupRef.current) {
-        const newX = position[0] + (e.movementX * 0.1);
-        const newZ = position[2] + (e.movementY * 0.1);
+        const newX = position[0] + (e.movementX * 0.02); // Reduced from 0.1 to 0.02 (5x less sensitive)
+        const newZ = position[2] + (e.movementY * 0.02); // Reduced from 0.1 to 0.02 (5x less sensitive)
         setPosition([newX, position[1], newZ]);
       }
     };
@@ -320,9 +320,9 @@ const Agent = React.forwardRef<THREE.Group, {
         // Exit straight line mode when turning
         straightLineMode.current = false;
         
-        // Rotational physics - 20% faster
-        const ROT_ACCEL = 0.6; // Increased by 20% (0.5 * 1.2 = 0.6)
-        const ROT_DRAG = 0.8;
+        // Rotational physics - 50% faster for more responsive turning
+        const ROT_ACCEL = 0.9; // Increased by 50% (0.6 * 1.5 = 0.9)
+        const ROT_DRAG = 0.7; // Reduced drag for faster rotation
         
         if (action === ActionType.LEFT) {
           rotationVelocity.current += ROT_ACCEL * delta;
@@ -330,11 +330,11 @@ const Agent = React.forwardRef<THREE.Group, {
           rotationVelocity.current -= ROT_ACCEL * delta;
         }
         
-        // Apply rotational drag
+        // Apply rotational drag (less drag for faster rotation)
         rotationVelocity.current *= (1 - ROT_DRAG * delta);
         
-        // Clamp rotation speed - 20% higher max rotation
-        rotationVelocity.current = THREE.MathUtils.clamp(rotationVelocity.current, -0.36, 0.36); // 0.3 * 1.2 = 0.36
+        // Clamp rotation speed - 50% higher max rotation
+        rotationVelocity.current = THREE.MathUtils.clamp(rotationVelocity.current, -0.54, 0.54); // 0.36 * 1.5 = 0.54
         
         // Slow down forward movement during turns
         velocity.current *= (1 - 0.5 * delta);
@@ -342,8 +342,8 @@ const Agent = React.forwardRef<THREE.Group, {
         // Exit straight line mode when scanning
         straightLineMode.current = false;
         
-        // Gentle scanning rotation - 20% faster
-        rotationVelocity.current = 0.12; // 0.1 * 1.2 = 0.12
+        // Faster scanning rotation - 50% faster
+        rotationVelocity.current = 0.18; // 0.12 * 1.5 = 0.18
         velocity.current *= (1 - 0.8 * delta); // Slow down while scanning
       } else if (action === ActionType.STOP) {
         // Exit straight line mode when stopping
@@ -366,7 +366,7 @@ const Agent = React.forwardRef<THREE.Group, {
       straightLineMode.current = false;
       
       const MAX_SPEED = 2.5;
-      const ROT_SPEED = 0.15;
+      const ROT_SPEED = 0.225; // 50% faster (0.15 * 1.5 = 0.225)
       
       let targetVel = 0;
       let targetRot = 0;
@@ -384,7 +384,7 @@ const Agent = React.forwardRef<THREE.Group, {
           targetVel = velocity.current * 0.5;
           break;
         case ActionType.SCAN:
-          targetRot = ROT_SPEED * 0.8 * 1.2; // 20% faster scanning
+          targetRot = ROT_SPEED * 0.8 * 1.5; // 50% faster scanning
           break;
         case ActionType.STOP:
         default:

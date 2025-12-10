@@ -14,6 +14,7 @@ export default function App() {
   const [agentAction, setAgentAction] = useState<ActionType>(ActionType.IDLE);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [lastVisionFrame, setLastVisionFrame] = useState<string | null>(null);
+  const [lastVisionFrameRight, setLastVisionFrameRight] = useState<string | null>(null);
   const [visionData, setVisionData] = useState<VisionResponse | null>(null);
   
   // LLM Mission State
@@ -62,6 +63,7 @@ export default function App() {
     
     isProcessingRef.current = true;
     setLastVisionFrame(leftImage); // Update UI preview with left image
+    setLastVisionFrameRight(rightImage); // Update UI preview with right image
 
     try {
       const result = await getNavCommand(leftImage, rightImage, selectedTarget);
@@ -203,51 +205,119 @@ export default function App() {
         {/* Content Scroll Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
           
-          {/* 1. AGENT VISION (SAM2 Simulation) */}
+          {/* 1. AGENT VISION (SAM2 Simulation) - STEREO */}
           <div className="space-y-2">
             <h2 className="text-xs font-bold text-gray-400 flex items-center gap-2">
-              <Eye className="w-3 h-3" /> AGENT OPTICAL SENSOR (SAM2)
+              <Eye className="w-3 h-3" /> AGENT OPTICAL SENSORS (STEREO SAM2)
             </h2>
-            <div className="relative w-full aspect-square bg-black border border-gray-700 rounded overflow-hidden group">
-              {lastVisionFrame ? (
-                <>
-                  <img src={lastVisionFrame} alt="Agent Vision" className="w-full h-full object-cover opacity-80" />
-                  {/* SAM2 Style Overlays */}
-                  <div className="absolute inset-0 pointer-events-none">
-                     {/* Scanning Grid */}
-                     <div className="w-full h-full bg-[linear-gradient(rgba(0,255,200,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,200,0.05)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
-                     
-                     {/* Bounding Box if detected */}
-                     {visionData?.targetVisible && visionData.boundingBox && visionData.boundingBox.length === 4 && (
-                       <div 
-                         className="absolute border-2 border-green-500 shadow-[0_0_10px_#00ff00] transition-all duration-300 ease-out"
-                         style={{
-                           top: `${visionData.boundingBox[0] / 10}%`,
-                           left: `${visionData.boundingBox[1] / 10}%`,
-                           height: `${(visionData.boundingBox[2] - visionData.boundingBox[0]) / 10}%`,
-                           width: `${(visionData.boundingBox[3] - visionData.boundingBox[1]) / 10}%`,
-                         }}
-                       >
-                         <span className="absolute -top-5 left-0 bg-green-500 text-black text-[9px] font-bold px-1">
-                           CONFIDENCE: 98%
-                         </span>
-                       </div>
-                     )}
-
-                     {/* Central Crosshair */}
-                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 border border-cyan-500/50"></div>
-                  </div>
-                </>
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
-                  NO SIGNAL
+            <div className="grid grid-cols-2 gap-2">
+              {/* Left Camera */}
+              <div className="relative w-full aspect-square bg-black border border-gray-700 rounded overflow-hidden group">
+                <div className="absolute top-1 left-1 z-10 bg-black/70 text-cyan-400 text-[8px] px-1 py-0.5 rounded border border-cyan-800">
+                  LEFT CAM
                 </div>
-              )}
+                {lastVisionFrame ? (
+                  <>
+                    <img src={lastVisionFrame} alt="Left Camera" className="w-full h-full object-cover opacity-80" />
+                    {/* SAM2 Style Overlays */}
+                    <div className="absolute inset-0 pointer-events-none">
+                       {/* Scanning Grid */}
+                       <div className="w-full h-full bg-[linear-gradient(rgba(0,255,200,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,200,0.05)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
+                       
+                       {/* Bounding Box if detected */}
+                       {visionData?.targetVisible && visionData.boundingBox && visionData.boundingBox.length === 4 && (
+                         <div 
+                           className="absolute border-2 border-green-500 shadow-[0_0_10px_#00ff00] transition-all duration-300 ease-out"
+                           style={{
+                             top: `${visionData.boundingBox[0] / 10}%`,
+                             left: `${visionData.boundingBox[1] / 10}%`,
+                             height: `${(visionData.boundingBox[2] - visionData.boundingBox[0]) / 10}%`,
+                             width: `${(visionData.boundingBox[3] - visionData.boundingBox[1]) / 10}%`,
+                           }}
+                         >
+                           <span className="absolute -top-5 left-0 bg-green-500 text-black text-[9px] font-bold px-1">
+                             CONF: 98%
+                           </span>
+                         </div>
+                       )}
+
+                       {/* Central Crosshair */}
+                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 border border-cyan-500/50"></div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+                    NO SIGNAL
+                  </div>
+                )}
+              </div>
+              
+              {/* Right Camera */}
+              <div className="relative w-full aspect-square bg-black border border-gray-700 rounded overflow-hidden group">
+                <div className="absolute top-1 left-1 z-10 bg-black/70 text-cyan-400 text-[8px] px-1 py-0.5 rounded border border-cyan-800">
+                  RIGHT CAM
+                </div>
+                {lastVisionFrameRight ? (
+                  <>
+                    <img src={lastVisionFrameRight} alt="Right Camera" className="w-full h-full object-cover opacity-80" />
+                    {/* SAM2 Style Overlays */}
+                    <div className="absolute inset-0 pointer-events-none">
+                       {/* Scanning Grid */}
+                       <div className="w-full h-full bg-[linear-gradient(rgba(0,255,200,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,200,0.05)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
+                       
+                       {/* Bounding Box if detected - same as left for consistency */}
+                       {visionData?.targetVisible && visionData.boundingBox && visionData.boundingBox.length === 4 && (
+                         <div 
+                           className="absolute border-2 border-green-500 shadow-[0_0_10px_#00ff00] transition-all duration-300 ease-out"
+                           style={{
+                             top: `${visionData.boundingBox[0] / 10}%`,
+                             left: `${visionData.boundingBox[1] / 10}%`,
+                             height: `${(visionData.boundingBox[2] - visionData.boundingBox[0]) / 10}%`,
+                             width: `${(visionData.boundingBox[3] - visionData.boundingBox[1]) / 10}%`,
+                           }}
+                         >
+                           <span className="absolute -top-5 left-0 bg-green-500 text-black text-[9px] font-bold px-1">
+                             CONF: 98%
+                           </span>
+                         </div>
+                       )}
+
+                       {/* Central Crosshair */}
+                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 border border-cyan-500/50"></div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-600 text-xs">
+                    NO SIGNAL
+                  </div>
+                )}
+              </div>
             </div>
+            
+            {/* Stereo Info Bar */}
+            <div className="flex items-center justify-between text-[10px] text-gray-400">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
+                  <span>STEREO ACTIVE</span>
+                </div>
+                {visionData?.distance !== undefined && visionData?.angle !== undefined && (
+                  <div className="flex items-center gap-1">
+                    <span>DIST: {visionData.distance?.toFixed(1)}m</span>
+                    <span>|</span>
+                    <span>ANGLE: {visionData.angle?.toFixed(1)}°</span>
+                  </div>
+                )}
+              </div>
+              <div className="text-cyan-300">
+                {visionData?.confidence !== undefined ? `CONFIDENCE: ${(visionData.confidence * 100).toFixed(0)}%` : "CALIBRATING..."}
+              </div>
+            </div>
+            
             {/* Reasoning Output */}
             <div className="bg-gray-800/50 p-2 rounded border border-gray-700 min-h-[40px]">
                <p className="text-xs font-mono text-cyan-300">
-                 {visionData?.reasoning || "Waiting for stream..."}
+                 {visionData?.reasoning || "Waiting for stereo stream..."}
                </p>
             </div>
           </div>
