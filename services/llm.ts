@@ -192,13 +192,6 @@ export class LLMService {
       });
     }
     
-    if (text.includes('pyramid') || text.includes('orange') || text.includes('triangle')) {
-      steps.push({
-        target: 'Orange Pyramid',
-        condition: 'reached',
-        actions: [ActionType.SCAN, ActionType.FORWARD, ActionType.STOP]
-      });
-    }
     
     if (text.includes('skeleton') || text.includes('skull') || text.includes('head') || text.includes('bone')) {
       steps.push({

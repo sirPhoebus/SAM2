@@ -6,7 +6,7 @@ import { ActionType, LogEntry, TargetShape, VisionResponse } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { Activity, Radio, Eye, Disc, Square, Triangle, Box, Send, Brain, Target } from 'lucide-react';
 
-const TARGET_OPTIONS: TargetShape[] = ['Red Cube', 'Pink Sphere', 'Green Cone', 'Yellow Cylinder', 'Orange Pyramid', 'Skeleton Head'];
+const TARGET_OPTIONS: TargetShape[] = ['Red Cube', 'Pink Sphere', 'Green Cone', 'Yellow Cylinder', 'Skeleton Head'];
 
 export default function App() {
   const [selectedTarget, setSelectedTarget] = useState<TargetShape>(TARGET_OPTIONS[0]);

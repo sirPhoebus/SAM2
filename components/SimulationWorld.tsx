@@ -25,7 +25,6 @@ const targets = [
   { type: 'Pink Sphere', color: '#ff69b4', position: [-4, 0.5, 4], geometry: 'sphere' },
   { type: 'Green Cone', color: '#00ff40', position: [2, 0.5, -6], geometry: 'cone' },
   { type: 'Yellow Cylinder', color: '#ffd700', position: [-6, 0.5, -2], geometry: 'cylinder' },
-  { type: 'Orange Pyramid', color: '#ff8800', position: [8, 0.5, -4], geometry: 'pyramid' },
   { type: 'Skeleton Head', color: '#f0f0f0', position: [6, 0.5, -8], geometry: 'skeleton' },
 ] as const;
 
@@ -148,9 +147,6 @@ const TargetObject: React.FC<{
         return <coneGeometry args={[0.6, 1.2, 32]} />;
       case 'cylinder':
         return <cylinderGeometry args={[0.5, 0.5, 1, 32]} />;
-      case 'pyramid':
-        // Tetrahedron (pyramid) geometry
-        return <tetrahedronGeometry args={[0.7]} />;
       case 'skeleton':
         // Skeleton head (skull shape)
         return (
@@ -295,64 +291,30 @@ const Agent = React.forwardRef<THREE.Group, {
       const cross = new THREE.Vector3().crossVectors(agentForward, directionToTarget);
       const isTargetLeft = cross.y > 0;
       
-      // CONFIDENCE-BASED STRAIGHT LINE MOVEMENT
-      // When confidence > 60%, move in a straight line for 50% of the remaining distance
-      if (confidence > 0.6 && action === ActionType.FORWARD && distanceToTarget > 1.0) {
-        if (!straightLineMode.current) {
-          // Enter straight line mode
-          straightLineMode.current = true;
-          initialDistanceToTarget.current = distanceToTarget;
-          // Ensure minimum straight line distance of 2.0 units to make it noticeable
-          straightLineDistance.current = Math.max(2.0, distanceToTarget * 0.5); // 50% of remaining distance, min 2.0
-          // Reduced logging for performance
-        }
+      // DISTANCE-BASED MOVEMENT: Faster when target is far away
+      // Always use aggressive movement when target is detected, regardless of confidence
+      if (action === ActionType.FORWARD && distanceToTarget > 1.0) {
+        // Use distance to determine desired speed
+        // When far away, use higher speed to close distance quickly
+        const baseSpeed = Math.min(3.5, distanceToTarget * 0.7); // 70% of distance, up to 3.5
+        const DESIRED_SPEED = baseSpeed;
+        const speedError = DESIRED_SPEED - velocity.current;
         
-        if (straightLineMode.current && straightLineDistance.current > 0) {
-          // In straight line mode - move forward without turning corrections
-          // Use higher speed in straight line mode for more noticeable movement
-          const DESIRED_SPEED = Math.min(3.0, distanceToTarget * 0.8); // Faster in straight line mode
-          const speedError = DESIRED_SPEED - velocity.current;
-          
-          // PID-like control (simplified) - more aggressive in straight line mode
-          const thrustForce = Math.min(MAX_THRUST * 1.5, Math.max(-MAX_THRUST, speedError * MASS * 3));
-          acceleration.current = thrustForce / MASS;
-          
-          // Apply drag
-          const dragForce = DRAG_COEFFICIENT * velocity.current * velocity.current;
-          acceleration.current -= dragForce / MASS;
-          
-          // Update velocity using acceleration
-          velocity.current += acceleration.current * delta;
-          velocity.current = Math.max(0, Math.min(3.0, velocity.current)); // Higher max speed in straight line mode
-          
-          // Drastically reduce rotation to maintain straight line
-          rotationVelocity.current *= (1 - 0.95 * delta);
-          
-          // Update remaining straight line distance
-          const distanceMoved = velocity.current * delta;
-          straightLineDistance.current -= distanceMoved;
-          
-          if (straightLineDistance.current <= 0) {
-            // Exit straight line mode
-            straightLineMode.current = false;
-          }
-        } else {
-          // Normal physics-based movement calculation
-          const DESIRED_SPEED = Math.min(2.5, distanceToTarget * 0.5); // Speed proportional to distance
-          const speedError = DESIRED_SPEED - velocity.current;
-          
-          // PID-like control (simplified)
-          const thrustForce = Math.min(MAX_THRUST, Math.max(-MAX_THRUST, speedError * MASS * 2));
-          acceleration.current = thrustForce / MASS;
-          
-          // Apply drag
-          const dragForce = DRAG_COEFFICIENT * velocity.current * velocity.current;
-          acceleration.current -= dragForce / MASS;
-          
-          // Update velocity using acceleration
-          velocity.current += acceleration.current * delta;
-          velocity.current = Math.max(0, Math.min(2.5, velocity.current)); // Clamp to max speed
-        }
+        // More aggressive acceleration when far from target
+        const accelerationMultiplier = distanceToTarget > 10.0 ? 4.0 : 3.0; // Extra aggressive when very far
+        const thrustForce = Math.min(MAX_THRUST * 2.0, Math.max(-MAX_THRUST, speedError * MASS * accelerationMultiplier));
+        acceleration.current = thrustForce / MASS;
+        
+        // Apply drag (but less when accelerating hard)
+        const dragForce = DRAG_COEFFICIENT * velocity.current * velocity.current;
+        acceleration.current -= dragForce / MASS;
+        
+        // Update velocity using acceleration
+        velocity.current += acceleration.current * delta;
+        velocity.current = Math.max(0, Math.min(3.5, velocity.current)); // Higher max speed
+        
+        // Reduce rotation to maintain forward momentum
+        rotationVelocity.current *= (1 - 0.9 * delta);
       } else if (action === ActionType.LEFT || action === ActionType.RIGHT) {
         // Exit straight line mode when turning
         straightLineMode.current = false;
