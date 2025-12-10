@@ -7,7 +7,7 @@ import { AgentState, ActionType, TargetShape } from '../types';
 interface SimulationWorldProps {
   target: TargetShape;
   isRunning: boolean;
-  onCaptureFrame: (blob: string) => void;
+  onCaptureFrame: (leftImage: string, rightImage: string) => void;
   onAgentUpdate: (state: Partial<AgentState>) => void;
   agentAction: ActionType;
   confidence?: number; // 0.0 to 1.0 confidence score
@@ -237,7 +237,7 @@ const TargetObject: React.FC<{
 // The "Physical" Agent in the world
 const Agent = React.forwardRef<THREE.Group, { 
   action: ActionType, 
-  onUpdateCamera: (cam: THREE.Camera) => void,
+  onUpdateCamera: (leftCam: THREE.Camera, rightCam: THREE.Camera) => void,
   targetPosition: [number, number, number] | null,
   confidence: number
 }>(({ 
@@ -247,7 +247,8 @@ const Agent = React.forwardRef<THREE.Group, {
   confidence = 0.0
 }, ref) => {
   const groupRef = useRef<THREE.Group>(null);
-  const camRef = useRef<THREE.PerspectiveCamera>(null);
+  const leftCamRef = useRef<THREE.PerspectiveCamera>(null);
+  const rightCamRef = useRef<THREE.PerspectiveCamera>(null);
   
   // Physics variables
   const velocity = useRef(0);
@@ -265,8 +266,8 @@ const Agent = React.forwardRef<THREE.Group, {
   const DRAG_COEFFICIENT = 0.5;
 
   useEffect(() => {
-    if (camRef.current) {
-      onUpdateCamera(camRef.current);
+    if (leftCamRef.current && rightCamRef.current) {
+      onUpdateCamera(leftCamRef.current, rightCamRef.current);
     }
   }, [onUpdateCamera]);
 
@@ -462,18 +463,28 @@ const Agent = React.forwardRef<THREE.Group, {
           <meshStandardMaterial color="#00ffff" emissive="#00ffff" emissiveIntensity={1.0} />
         </mesh>
         
-        {/* The actual camera the agent "sees" through */}
-        <PerspectiveCamera 
-            ref={camRef} 
-            makeDefault={false} // We handle rendering manually
-            // Camera looks down its own -Z axis by default.
-            // Since our agent moves along -Z, we want 0 rotation.
-            position={[0, 0, -0.2]} 
-            rotation={[0, 0, 0]} 
-            fov={80} // Wide angle lens for robot
-            near={0.1}
-            far={30}
-        />
+      {/* Stereo Vision Cameras */}
+      {/* Left Camera */}
+      <PerspectiveCamera 
+          ref={leftCamRef} 
+          makeDefault={false}
+          position={[-0.1, 0, -0.2]} // 10cm left of center
+          rotation={[0, 0, 0]} 
+          fov={110} // Wide 110° field of view
+          near={0.1}
+          far={30}
+      />
+      
+      {/* Right Camera (for stereo) */}
+      <PerspectiveCamera 
+          ref={rightCamRef} 
+          makeDefault={false}
+          position={[0.1, 0, -0.2]} // 10cm right of center
+          rotation={[0, 0, 0]} 
+          fov={110} // Wide 110° field of view
+          near={0.1}
+          far={30}
+      />
       </group>
       
       {/* Light Beams - Cosmetic search lights */}
@@ -503,29 +514,32 @@ const Agent = React.forwardRef<THREE.Group, {
   );
 });
 
-// Scene Manager to handle off-screen rendering for "Vision"
+// Scene Manager to handle off-screen rendering for "Stereo Vision"
 const SceneManager = ({ 
   isRunning, 
   onCaptureFrame, 
   agentAction,
-  agentCamRef 
+  leftCamRef,
+  rightCamRef
 }: { 
   isRunning: boolean; 
-  onCaptureFrame: (b: string) => void;
+  onCaptureFrame: (leftImage: string, rightImage: string) => void;
   agentAction: ActionType;
-  agentCamRef: React.MutableRefObject<THREE.Camera | null>;
+  leftCamRef: React.MutableRefObject<THREE.Camera | null>;
+  rightCamRef: React.MutableRefObject<THREE.Camera | null>;
 }) => {
   const { gl, scene } = useThree();
   
-  // We need a render target to capture the agent's view without messing up the main canvas
-  const renderTarget = useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
+  // We need two render targets for stereo vision
+  const leftRenderTarget = useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
+  const rightRenderTarget = useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
   
   // Ref to throttle vision capture
   const lastCaptureTime = useRef(0);
   const CAPTURE_INTERVAL = 600; // 600ms capture rate for better responsiveness
 
   useFrame((state) => {
-    if (!isRunning || !agentCamRef.current) return;
+    if (!isRunning || !leftCamRef.current || !rightCamRef.current) return;
 
     const now = state.clock.elapsedTime * 1000;
     if (now - lastCaptureTime.current > CAPTURE_INTERVAL) {
@@ -535,41 +549,75 @@ const SceneManager = ({
       const currentRenderTarget = gl.getRenderTarget();
       const currentXrEnabled = gl.xr.enabled;
       
-      // 2. Render Agent's View to texture
+      // 2. Render Left Camera View
       gl.xr.enabled = false;
-      gl.setRenderTarget(renderTarget);
-      gl.render(scene, agentCamRef.current);
+      gl.setRenderTarget(leftRenderTarget);
+      gl.render(scene, leftCamRef.current);
       
-      // 3. Read pixels
-      const width = renderTarget.width;
-      const height = renderTarget.height;
-      const buffer = new Uint8Array(width * height * 4);
-      gl.readRenderTargetPixels(renderTarget, 0, 0, width, height, buffer);
+      // 3. Read left camera pixels
+      const width = leftRenderTarget.width;
+      const height = leftRenderTarget.height;
+      const leftBuffer = new Uint8Array(width * height * 4);
+      gl.readRenderTargetPixels(leftRenderTarget, 0, 0, width, height, leftBuffer);
       
-      // 4. Convert to Base64 (A bit expensive, but simplest for this architecture without backend)
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      if (context) {
-        const imageData = context.createImageData(width, height);
+      // 4. Render Right Camera View
+      gl.setRenderTarget(rightRenderTarget);
+      gl.render(scene, rightCamRef.current);
+      
+      // 5. Read right camera pixels
+      const rightBuffer = new Uint8Array(width * height * 4);
+      gl.readRenderTargetPixels(rightRenderTarget, 0, 0, width, height, rightBuffer);
+      
+      // 6. Convert both to Base64
+      const leftCanvas = document.createElement('canvas');
+      leftCanvas.width = width;
+      leftCanvas.height = height;
+      const leftContext = leftCanvas.getContext('2d');
+      
+      const rightCanvas = document.createElement('canvas');
+      rightCanvas.width = width;
+      rightCanvas.height = height;
+      const rightContext = rightCanvas.getContext('2d');
+      
+      if (leftContext && rightContext) {
+        // Convert left image
+        const leftImageData = leftContext.createImageData(width, height);
         // Flip Y for WebGL -> Canvas
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const srcIdx = ((height - 1 - y) * width + x) * 4;
                 const dstIdx = (y * width + x) * 4;
-                imageData.data[dstIdx] = buffer[srcIdx];
-                imageData.data[dstIdx + 1] = buffer[srcIdx + 1];
-                imageData.data[dstIdx + 2] = buffer[srcIdx + 2];
-                imageData.data[dstIdx + 3] = buffer[srcIdx + 3];
+                leftImageData.data[dstIdx] = leftBuffer[srcIdx];
+                leftImageData.data[dstIdx + 1] = leftBuffer[srcIdx + 1];
+                leftImageData.data[dstIdx + 2] = leftBuffer[srcIdx + 2];
+                leftImageData.data[dstIdx + 3] = leftBuffer[srcIdx + 3];
             }
         }
-        context.putImageData(imageData, 0, 0);
+        leftContext.putImageData(leftImageData, 0, 0);
+        
+        // Convert right image
+        const rightImageData = rightContext.createImageData(width, height);
+        // Flip Y for WebGL -> Canvas
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const srcIdx = ((height - 1 - y) * width + x) * 4;
+                const dstIdx = (y * width + x) * 4;
+                rightImageData.data[dstIdx] = rightBuffer[srcIdx];
+                rightImageData.data[dstIdx + 1] = rightBuffer[srcIdx + 1];
+                rightImageData.data[dstIdx + 2] = rightBuffer[srcIdx + 2];
+                rightImageData.data[dstIdx + 3] = rightBuffer[srcIdx + 3];
+            }
+        }
+        rightContext.putImageData(rightImageData, 0, 0);
+        
         // High quality jpeg for vision model
-        onCaptureFrame(canvas.toDataURL('image/jpeg', 0.8));
+        const leftImageBase64 = leftCanvas.toDataURL('image/jpeg', 0.8);
+        const rightImageBase64 = rightCanvas.toDataURL('image/jpeg', 0.8);
+        
+        onCaptureFrame(leftImageBase64, rightImageBase64);
       }
 
-      // 5. Restore state
+      // 7. Restore state
       gl.setRenderTarget(currentRenderTarget);
       gl.xr.enabled = currentXrEnabled;
     }
@@ -586,7 +634,10 @@ const OrbitControlsWrapper = () => {
 // Agent position context to share agent position with targets
 const AgentPositionContext = React.createContext<[number, number, number] | null>(null);
 
-const SimulationWorldInner: React.FC<SimulationWorldProps & { agentCamRef: React.RefObject<THREE.Camera | null> }> = (props) => {
+const SimulationWorldInner: React.FC<SimulationWorldProps & { 
+  leftCamRef: React.RefObject<THREE.Camera | null>;
+  rightCamRef: React.RefObject<THREE.Camera | null>;
+}> = (props) => {
   const agentGroupRef = useRef<THREE.Group>(null);
   const [agentPosition, setAgentPosition] = useState<[number, number, number]>([0, 0, 0]);
   const [destroyedTargets, setDestroyedTargets] = useState<Set<string>>(new Set());
@@ -662,28 +713,33 @@ const SimulationWorldInner: React.FC<SimulationWorldProps & { agentCamRef: React
       <Agent 
         ref={agentGroupRef}
         action={props.agentAction} 
-        onUpdateCamera={(cam) => { props.agentCamRef.current = cam; }}
+        onUpdateCamera={(leftCam, rightCam) => { 
+          props.leftCamRef.current = leftCam;
+          props.rightCamRef.current = rightCam;
+        }}
         targetPosition={targets.find(t => t.type === props.target && !destroyedTargets.has(t.type))?.position as [number, number, number] || null}
         confidence={props.confidence || 0.0}
       />
 
-      {/* Logic */}
+      {/* Stereo Vision Scene Manager */}
       <SceneManager 
         isRunning={props.isRunning} 
-        onCaptureFrame={props.onCaptureFrame} 
+        onCaptureFrame={props.onCaptureFrame}
         agentAction={props.agentAction}
-        agentCamRef={props.agentCamRef}
+        leftCamRef={props.leftCamRef}
+        rightCamRef={props.rightCamRef}
       />
     </AgentPositionContext.Provider>
   );
 };
 
 export const SimulationWorld: React.FC<SimulationWorldProps> = (props) => {
-  const agentCamRef = useRef<THREE.Camera | null>(null);
+  const leftCamRef = useRef<THREE.Camera | null>(null);
+  const rightCamRef = useRef<THREE.Camera | null>(null);
 
   return (
     <Canvas shadows className="bg-black">
-      <SimulationWorldInner {...props} agentCamRef={agentCamRef} />
+      <SimulationWorldInner {...props} leftCamRef={leftCamRef} rightCamRef={rightCamRef} />
     </Canvas>
   );
 };

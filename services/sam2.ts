@@ -2,7 +2,48 @@ import { VisionResponse, ActionType } from "../types";
 
 const SAM2_BACKEND_URL = "http://localhost:8000";
 
-export const getNavCommand = async (imageBase64: string, targetDescription: string): Promise<VisionResponse> => {
+export const getNavCommand = async (leftImageBase64: string, rightImageBase64: string, targetDescription: string): Promise<VisionResponse> => {
+  try {
+    // Try stereo vision endpoint first
+    const response = await fetch(`${SAM2_BACKEND_URL}/api/stereo_vision`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        left_image_base64: leftImageBase64,
+        right_image_base64: rightImageBase64,
+        target_description: targetDescription,
+      }),
+    });
+
+    if (!response.ok) {
+      // Fall back to monocular vision if stereo fails
+      return await getMonocularNavCommand(leftImageBase64, targetDescription);
+    }
+
+    const data = await response.json();
+    
+    // Ensure the response matches our expected format
+    return {
+      action: data.action as ActionType,
+      reasoning: data.reasoning,
+      targetVisible: data.targetVisible,
+      confidence: data.confidence,
+      boundingBox: data.boundingBox,
+      distance: data.distance,
+      angle: data.angle,
+    };
+  } catch (error) {
+    console.error("SAM2 Stereo Vision Error:", error);
+    
+    // Fall back to monocular vision
+    return await getMonocularNavCommand(leftImageBase64, targetDescription);
+  }
+};
+
+// Fallback function for monocular vision (backward compatibility)
+const getMonocularNavCommand = async (imageBase64: string, targetDescription: string): Promise<VisionResponse> => {
   try {
     const response = await fetch(`${SAM2_BACKEND_URL}/api/vision`, {
       method: "POST",
@@ -21,7 +62,6 @@ export const getNavCommand = async (imageBase64: string, targetDescription: stri
 
     const data = await response.json();
     
-    // Ensure the response matches our expected format
     return {
       action: data.action as ActionType,
       reasoning: data.reasoning,
@@ -30,7 +70,7 @@ export const getNavCommand = async (imageBase64: string, targetDescription: stri
       boundingBox: data.boundingBox,
     };
   } catch (error) {
-    console.error("SAM2 Vision Error:", error);
+    console.error("SAM2 Monocular Vision Error:", error);
     
     let errorMessage = "SAM2 backend unavailable. Falling back to scan mode.";
     if (error instanceof Error) {

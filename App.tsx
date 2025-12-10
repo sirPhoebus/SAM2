@@ -57,19 +57,24 @@ export default function App() {
     }
   }, [currentMission, setCurrentMission, setSelectedTarget, addLog, setIsRunning]);
 
-  const handleVisionCapture = useCallback(async (base64Image: string) => {
+  const handleVisionCapture = useCallback(async (leftImage: string, rightImage: string) => {
     if (isProcessingRef.current || !isRunning) return;
     
     isProcessingRef.current = true;
-    setLastVisionFrame(base64Image); // Update UI preview
+    setLastVisionFrame(leftImage); // Update UI preview with left image
 
     try {
-      const result = await getNavCommand(base64Image, selectedTarget);
+      const result = await getNavCommand(leftImage, rightImage, selectedTarget);
       
       setVisionData(result);
       setAgentAction(result.action);
       
-      addLog(`VISION [SAM2]: ${result.reasoning}`, 'vision');
+      // Enhanced logging with stereo information
+      let logMessage = `VISION [STEREO]: ${result.reasoning}`;
+      if (result.distance !== undefined && result.distance !== null && result.angle !== undefined && result.angle !== null) {
+        logMessage += ` | Distance: ${result.distance.toFixed(1)}m | Angle: ${result.angle.toFixed(1)}°`;
+      }
+      addLog(logMessage, 'vision');
       addLog(`MOTOR: ${result.action}`, 'action');
 
       // Check if target is reached (high confidence and STOP action)

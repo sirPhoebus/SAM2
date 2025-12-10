@@ -20,6 +20,8 @@ export interface VisionResponse {
   targetVisible: boolean;
   confidence?: number; // 0.0 to 1.0 confidence score
   boundingBox?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000 scale
+  distance?: number; // Distance to target in meters (stereo vision)
+  angle?: number; // Angle to target in degrees (stereo vision)
 }
 
 export interface LogEntry {
