@@ -49,6 +49,7 @@ export const Agent = React.forwardRef<THREE.Group, AgentProps>(({
   const explorationStartTime = useRef(0);
   const lastRotationAngle = useRef(0);
   const totalRotation = useRef(0);
+  const scanRotation = useRef(0);
   const explorationPhase = useRef(0);
   
   // Pathfinding state
@@ -326,15 +327,15 @@ export const Agent = React.forwardRef<THREE.Group, AgentProps>(({
     
     totalRotation.current += Math.abs(normalizedDelta);
     
-    // Check if we should enter pathfinding mode (after 2 full rotations without finding target)
-    // NEW LOGIC: Always go to opposite hemisphere after 2 rotations without finding target
-    if (totalRotation.current > 4 * Math.PI && !pathfindingMode.current && targetPosition) {
+    // Check if we should enter pathfinding mode (after 1 full scan rotation)
+    // NEW LOGIC: Always go to opposite hemisphere after 1 scan rotation without finding target
+    if (scanRotation.current > 2 * Math.PI && !pathfindingMode.current && targetPosition) {
       // Determine which side agent is on
       const currentAgentSide = determineAgentSide(agentPos.z);
       const targetZ = targetPosition[2];
       const targetSide = determineTargetSide(targetZ);
       
-      console.log(`SITUATION AWARENESS: Agent at z=${agentPos.z.toFixed(1)} (${currentAgentSide}), Target at z=${targetZ.toFixed(1)} (${targetSide}), totalRotation=${totalRotation.current.toFixed(2)}`);
+      console.log(`SITUATION AWARENESS: Agent at z=${agentPos.z.toFixed(1)} (${currentAgentSide}), Target at z=${targetZ.toFixed(1)} (${targetSide}), scanRotation=${scanRotation.current.toFixed(2)}`);
       
       // Always go to opposite side for systematic exploration after scanning current side
       const oppositeSide = currentAgentSide === 'north' ? 'south' : 'north';
@@ -356,12 +357,10 @@ export const Agent = React.forwardRef<THREE.Group, AgentProps>(({
       // Reset exploration mode if active
       explorationMode.current = false;
       totalRotation.current = 0; // Reset rotation counter
+      scanRotation.current = 0; // Reset scan rotation
     }
     
-    // Force trigger for testing - if target exists and we're not in any mode
-    if (targetPosition && !pathfindingMode.current && !explorationMode.current && state.clock.elapsedTime > 5.0) {
-      console.log(`TEST TRIGGER: targetPosition=${targetPosition}, agentPos.z=${agentPos.z.toFixed(1)}`);
-    }
+    // Force trigger for testing - removed to prevent infinite logging
     
     // Also trigger exploration if no target at all (idle mode)
     if (totalRotation.current > 2 * Math.PI && !explorationMode.current && !targetPosition) {
@@ -478,54 +477,25 @@ export const Agent = React.forwardRef<THREE.Group, AgentProps>(({
       if (collisionDetected.current) {
         collisionCooldown.current = COLLISION_COOLDOWN_TIME;
         
-        // Store current view state before switching
-        const wasUsingRearView = useRearView.current;
-        
-        // Switch to rear view when collision detected (only if not in pathfinding mode)
-        if (viewSwitchCooldown.current <= 0 && !pathfindingMode.current) {
-          useRearView.current = !useRearView.current;
-          viewSwitchCooldown.current = VIEW_SWITCH_COOLDOWN_TIME;
-          
-          // Update camera callback
-          if (leftCamRef.current && rightCamRef.current && rearLeftCamRef.current && rearRightCamRef.current) {
-            onUpdateCamera(
-              useRearView.current ? rearLeftCamRef.current : leftCamRef.current,
-              useRearView.current ? rearRightCamRef.current : rightCamRef.current,
-              useRearView.current
-            );
-          }
-        }
-        
-        // CRITICAL FIX: When collision detected, we need to move AWAY from obstacle
-        // If we're switching from front to rear view, we were moving forward into obstacle
-        // So we need to move backward (positive velocity in rear view)
-        // If we're switching from rear to front view, we were moving backward into obstacle  
-        // So we need to move forward (negative velocity in front view)
-        
+        // Reverse direction when collision detected
         const reverseSpeed = Math.min(2.5, Math.abs(velocity.current) + 1.5);
+        velocity.current = reverseSpeed;
         
-        // Determine correct movement direction based on view change
-        if (wasUsingRearView !== useRearView.current) {
-          // View changed - we need to move opposite of current direction
-          // If we were in front view (moving forward into wall) and switch to rear view,
-          // we need to move backward (positive velocity)
-          // If we were in rear view (moving backward into wall) and switch to front view,
-          // we need to move forward (negative velocity)
-          
-          // Always use positive velocity magnitude, direction handled by translateZ
-          velocity.current = reverseSpeed;
-        } else {
-          // No view change - just reverse current direction
-          velocity.current = reverseSpeed;
-        }
-        
-        // Reduce rotation to move straight back/forward
+        // Reduce rotation to move straight back
         rotationVelocity.current *= 0.3;
       }
     }
 
     // Get flipped command if rear view is active
     const effectiveAction = flipCommand(action);
+    
+    // Accumulate scan rotation only during SCAN action
+    if (action === ActionType.SCAN) {
+      scanRotation.current += Math.abs(normalizedDelta);
+    } else {
+      // Reset scan rotation when not scanning (e.g., tracking object)
+      scanRotation.current = 0;
+    }
     
     // Update movement
     updateMovement(delta, effectiveAction, agentPos);
