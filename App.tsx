@@ -16,6 +16,9 @@ export default function App() {
   const [lastVisionFrame, setLastVisionFrame] = useState<string | null>(null);
   const [lastVisionFrameRight, setLastVisionFrameRight] = useState<string | null>(null);
   const [visionData, setVisionData] = useState<VisionResponse | null>(null);
+  const [isRearView, setIsRearView] = useState(false);
+  const [agentLocation, setAgentLocation] = useState<'north' | 'south' | 'unknown'>('unknown');
+  const [agentThinking, setAgentThinking] = useState<string>('');
   
   // LLM Mission State
   const [missionInput, setMissionInput] = useState('');
@@ -177,6 +180,7 @@ export default function App() {
           onAgentUpdate={() => {}}
           agentAction={agentAction}
           confidence={visionData?.confidence}
+          onCameraViewChange={setIsRearView}
         />
         
         {/* Overlay HUD for Main View */}
@@ -212,9 +216,13 @@ export default function App() {
             </h2>
             <div className="grid grid-cols-2 gap-2">
               {/* Left Camera */}
-              <div className="relative w-full aspect-square bg-black border border-gray-700 rounded overflow-hidden group">
-                <div className="absolute top-1 left-1 z-10 bg-black/70 text-cyan-400 text-[8px] px-1 py-0.5 rounded border border-cyan-800">
-                  LEFT CAM
+              <div className={`relative w-full aspect-square bg-black rounded overflow-hidden group ${
+                isRearView ? 'border-2 border-purple-500 shadow-[0_0_10px_#ff00ff]' : 'border border-gray-700'
+              }`}>
+                <div className={`absolute top-1 left-1 z-10 text-[8px] px-1 py-0.5 rounded ${
+                  isRearView ? 'bg-purple-900/70 text-purple-300 border border-purple-700' : 'bg-black/70 text-cyan-400 border border-cyan-800'
+                }`}>
+                  {isRearView ? 'REAR LEFT' : 'LEFT CAM'}
                 </div>
                 {lastVisionFrame ? (
                   <>
@@ -253,9 +261,13 @@ export default function App() {
               </div>
               
               {/* Right Camera */}
-              <div className="relative w-full aspect-square bg-black border border-gray-700 rounded overflow-hidden group">
-                <div className="absolute top-1 left-1 z-10 bg-black/70 text-cyan-400 text-[8px] px-1 py-0.5 rounded border border-cyan-800">
-                  RIGHT CAM
+              <div className={`relative w-full aspect-square bg-black rounded overflow-hidden group ${
+                isRearView ? 'border-2 border-purple-500 shadow-[0_0_10px_#ff00ff]' : 'border border-gray-700'
+              }`}>
+                <div className={`absolute top-1 left-1 z-10 text-[8px] px-1 py-0.5 rounded ${
+                  isRearView ? 'bg-purple-900/70 text-purple-300 border border-purple-700' : 'bg-black/70 text-cyan-400 border border-cyan-800'
+                }`}>
+                  {isRearView ? 'REAR RIGHT' : 'RIGHT CAM'}
                 </div>
                 {lastVisionFrameRight ? (
                   <>

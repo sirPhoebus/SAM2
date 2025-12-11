@@ -1,8 +1,10 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { PerspectiveCamera, useTexture, Grid, Environment, Stars, ContactShadows, OrbitControls } from '@react-three/drei';
+import React, { useRef, useState, useEffect } from 'react';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import { PerspectiveCamera, Grid, Stars, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { AgentState, ActionType, TargetShape } from '../types';
+import { Agent } from './simulation/Agent';
+import { WallWithGap } from './simulation/WallWithGap';
 
 interface SimulationWorldProps {
   target: TargetShape;
@@ -10,16 +12,12 @@ interface SimulationWorldProps {
   onCaptureFrame: (leftImage: string, rightImage: string) => void;
   onAgentUpdate: (state: Partial<AgentState>) => void;
   agentAction: ActionType;
-  confidence?: number; // 0.0 to 1.0 confidence score
+  confidence?: number;
+  onCameraViewChange?: (useRearView: boolean) => void;
+  onAgentLocationChange?: (location: 'north' | 'south' | 'unknown', thinking: string) => void;
 }
 
-// Reusable Materials
-const floorMaterial = new THREE.MeshStandardMaterial({ 
-  color: '#1a1a1a', 
-  roughness: 0.8, 
-  metalness: 0.2 
-});
-
+// Target data
 const targets = [
   { type: 'Red Cube', color: '#ff0040', position: [5, 0.5, 5], geometry: 'box' },
   { type: 'Pink Sphere', color: '#ff69b4', position: [-4, 0.5, 4], geometry: 'sphere' },
@@ -28,6 +26,7 @@ const targets = [
   { type: 'Skeleton Head', color: '#f0f0f0', position: [6, 0.5, -8], geometry: 'skeleton' },
 ] as const;
 
+// Enhanced Target Object component with dragging and mission completion
 const TargetObject: React.FC<{ 
   data: typeof targets[number]; 
   isSelected: boolean;
@@ -47,16 +46,12 @@ const TargetObject: React.FC<{
   // Check if target is reached (selected and agent is close OR agent has stopped)
   useEffect(() => {
     if (isSelected && onTargetReached && !isExploding && agentPosition) {
-      // Calculate distance between agent and target
       const [ax, ay, az] = agentPosition;
       const [tx, ty, tz] = position;
       const distance = Math.sqrt((ax - tx) ** 2 + (ay - ty) ** 2 + (az - tz) ** 2);
       
-      // Trigger explosion if agent is close to target
-      // Use more generous distance for mission targets
-      const shouldExplode = distance < 2.0; // 2.0 units is generous enough
+      const shouldExplode = distance < 2.0;
       
-      // If agent is VERY close (inside object), force explosion immediately
       if (distance < 0.3) {
         setIsExploding(true);
         onTargetReached();
@@ -64,7 +59,6 @@ const TargetObject: React.FC<{
       }
       
       if (shouldExplode) {
-        // Simulate target reached after a delay
         const timer = setTimeout(() => {
           setIsExploding(true);
           onTargetReached();
@@ -77,13 +71,11 @@ const TargetObject: React.FC<{
   // Handle explosion animation
   useFrame((state) => {
     if (meshRef.current && !isDestroyed) {
-      // Only rotate if this target is selected
       if (isSelected && !isExploding) {
         meshRef.current.rotation.y += 0.01;
       }
       meshRef.current.position.y = 0.5 + Math.sin(state.clock.elapsedTime * 2) * 0.1;
       
-      // Handle explosion animation
       if (isExploding) {
         setExplosionProgress(prev => Math.min(prev + 0.05, 1));
         if (meshRef.current) {
@@ -93,7 +85,6 @@ const TargetObject: React.FC<{
           material.emissiveIntensity = 0.5 + explosionProgress * 3;
         }
         
-        // Mark as destroyed after explosion completes
         if (explosionProgress >= 1) {
           setIsExploding(false);
           setIsDestroyed(true);
@@ -116,8 +107,8 @@ const TargetObject: React.FC<{
 
     const handleMouseMove = (e: MouseEvent) => {
       if (groupRef.current) {
-        const newX = position[0] + (e.movementX * 0.02); // Reduced from 0.1 to 0.02 (5x less sensitive)
-        const newZ = position[2] + (e.movementY * 0.02); // Reduced from 0.1 to 0.02 (5x less sensitive)
+        const newX = position[0] + (e.movementX * 0.02);
+        const newZ = position[2] + (e.movementY * 0.02);
         setPosition([newX, position[1], newZ]);
       }
     };
@@ -148,11 +139,9 @@ const TargetObject: React.FC<{
       case 'cylinder':
         return <cylinderGeometry args={[0.5, 0.5, 1, 32]} />;
       case 'skeleton':
-        // Skeleton head (skull shape)
         return (
           <>
             <sphereGeometry args={[0.5, 32, 32]} />
-            {/* Eye sockets */}
             <mesh position={[0.2, 0.1, 0.4]}>
               <sphereGeometry args={[0.1, 16, 16]} />
               <meshStandardMaterial color="#000000" />
@@ -196,12 +185,10 @@ const TargetObject: React.FC<{
       {/* Arrow indicators for dragging */}
       {isDragging && (
         <>
-          {/* X-axis arrow (red) */}
           <arrowHelper
             args={[new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 0), 0.5, 0xff0000]}
             position={[0.8, 0, 0]}
           />
-          {/* Z-axis arrow (blue) */}
           <arrowHelper
             args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 1), 0.5, 0x0000ff]}
             position={[0, 0, 0.8]}
@@ -234,411 +221,122 @@ const TargetObject: React.FC<{
   );
 };
 
-// The "Physical" Agent in the world
-const Agent = React.forwardRef<THREE.Group, { 
-  action: ActionType, 
-  onUpdateCamera: (leftCam: THREE.Camera, rightCam: THREE.Camera) => void,
-  targetPosition: [number, number, number] | null,
-  confidence: number
-}>(({ 
-  action, 
-  onUpdateCamera,
-  targetPosition,
-  confidence = 0.0
-}, ref) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const leftCamRef = useRef<THREE.PerspectiveCamera>(null);
-  const rightCamRef = useRef<THREE.PerspectiveCamera>(null);
-  
-  // Physics variables
-  const velocity = useRef(0);
-  const rotationVelocity = useRef(0);
-  const acceleration = useRef(0);
-  
-  // Confidence-based straight line movement state
-  const straightLineMode = useRef(false);
-  const straightLineDistance = useRef(0);
-  const initialDistanceToTarget = useRef(0);
-  
-  // Agent properties
-  const MASS = 10.0; // kg
-  const MAX_THRUST = 5.0; // Newtons
-  const DRAG_COEFFICIENT = 0.5;
-
-  useEffect(() => {
-    if (leftCamRef.current && rightCamRef.current) {
-      onUpdateCamera(leftCamRef.current, rightCamRef.current);
-    }
-  }, [onUpdateCamera]);
-
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
-
-    // Calculate distance to target if target exists
-    let distanceToTarget = Infinity;
-    let directionToTarget = new THREE.Vector3();
-    
-    if (targetPosition) {
-      const agentPos = groupRef.current.position;
-      const targetPos = new THREE.Vector3(...targetPosition);
-      distanceToTarget = agentPos.distanceTo(targetPos);
-      directionToTarget = targetPos.clone().sub(agentPos).normalize();
-      
-      // Calculate angle between agent forward direction and target direction
-      const agentForward = new THREE.Vector3(0, 0, -1).applyQuaternion(groupRef.current.quaternion);
-      const angleToTarget = agentForward.angleTo(directionToTarget);
-      
-      // Determine if target is to the left or right
-      const cross = new THREE.Vector3().crossVectors(agentForward, directionToTarget);
-      const isTargetLeft = cross.y > 0;
-      
-      // DISTANCE-BASED MOVEMENT: Faster when target is far away
-      // Always use aggressive movement when target is detected, regardless of confidence
-      if (action === ActionType.FORWARD && distanceToTarget > 1.0) {
-        // Use distance to determine desired speed
-        // When far away, use higher speed to close distance quickly
-        const baseSpeed = Math.min(3.5, distanceToTarget * 0.7); // 70% of distance, up to 3.5
-        const DESIRED_SPEED = baseSpeed;
-        const speedError = DESIRED_SPEED - velocity.current;
-        
-        // More aggressive acceleration when far from target
-        const accelerationMultiplier = distanceToTarget > 10.0 ? 4.0 : 3.0; // Extra aggressive when very far
-        const thrustForce = Math.min(MAX_THRUST * 2.0, Math.max(-MAX_THRUST, speedError * MASS * accelerationMultiplier));
-        acceleration.current = thrustForce / MASS;
-        
-        // Apply drag (but less when accelerating hard)
-        const dragForce = DRAG_COEFFICIENT * velocity.current * velocity.current;
-        acceleration.current -= dragForce / MASS;
-        
-        // Update velocity using acceleration
-        velocity.current += acceleration.current * delta;
-        velocity.current = Math.max(0, Math.min(3.5, velocity.current)); // Higher max speed
-        
-        // Reduce rotation to maintain forward momentum
-        rotationVelocity.current *= (1 - 0.9 * delta);
-      } else if (action === ActionType.LEFT || action === ActionType.RIGHT) {
-        // Exit straight line mode when turning
-        straightLineMode.current = false;
-        
-        // Rotational physics - 50% faster for more responsive turning
-        const ROT_ACCEL = 0.9; // Increased by 50% (0.6 * 1.5 = 0.9)
-        const ROT_DRAG = 0.7; // Reduced drag for faster rotation
-        
-        if (action === ActionType.LEFT) {
-          rotationVelocity.current += ROT_ACCEL * delta;
-        } else if (action === ActionType.RIGHT) {
-          rotationVelocity.current -= ROT_ACCEL * delta;
-        }
-        
-        // Apply rotational drag (less drag for faster rotation)
-        rotationVelocity.current *= (1 - ROT_DRAG * delta);
-        
-        // Clamp rotation speed - 50% higher max rotation
-        rotationVelocity.current = THREE.MathUtils.clamp(rotationVelocity.current, -0.54, 0.54); // 0.36 * 1.5 = 0.54
-        
-        // Slow down forward movement during turns
-        velocity.current *= (1 - 0.5 * delta);
-      } else if (action === ActionType.SCAN) {
-        // Exit straight line mode when scanning
-        straightLineMode.current = false;
-        
-        // Faster scanning rotation - 50% faster
-        rotationVelocity.current = 0.18; // 0.12 * 1.5 = 0.18
-        velocity.current *= (1 - 0.8 * delta); // Slow down while scanning
-      } else if (action === ActionType.STOP) {
-        // Exit straight line mode when stopping
-        straightLineMode.current = false;
-        
-        // Decelerate to stop
-        const brakingForce = Math.min(MAX_THRUST, velocity.current * MASS * 5);
-        acceleration.current = -brakingForce / MASS;
-        velocity.current += acceleration.current * delta;
-        velocity.current = Math.max(0, velocity.current);
-        rotationVelocity.current *= (1 - 0.9 * delta);
-      } else {
-        // IDLE or other actions - natural deceleration
-        straightLineMode.current = false;
-        velocity.current *= (1 - 0.5 * delta);
-        rotationVelocity.current *= (1 - 0.8 * delta);
-      }
-    } else {
-      // No target - use simpler movement
-      straightLineMode.current = false;
-      
-      const MAX_SPEED = 2.5;
-      const ROT_SPEED = 0.225; // 50% faster (0.15 * 1.5 = 0.225)
-      
-      let targetVel = 0;
-      let targetRot = 0;
-
-      switch (action) {
-        case ActionType.FORWARD:
-          targetVel = MAX_SPEED;
-          break;
-        case ActionType.LEFT:
-          targetRot = ROT_SPEED;
-          targetVel = velocity.current * 0.5;
-          break;
-        case ActionType.RIGHT:
-          targetRot = -ROT_SPEED;
-          targetVel = velocity.current * 0.5;
-          break;
-        case ActionType.SCAN:
-          targetRot = ROT_SPEED * 0.8 * 1.5; // 50% faster scanning
-          break;
-        case ActionType.STOP:
-        default:
-          targetVel = 0;
-          targetRot = 0;
-          break;
-      }
-
-      velocity.current = THREE.MathUtils.lerp(velocity.current, targetVel, delta * 2);
-      rotationVelocity.current = THREE.MathUtils.lerp(rotationVelocity.current, targetRot, delta * 4);
-    }
-
-    // Apply movement
-    groupRef.current.rotation.y += rotationVelocity.current * delta;
-    groupRef.current.translateZ(-velocity.current * delta);
-
-    // Collision boundary
-    const pos = groupRef.current.position;
-    pos.x = THREE.MathUtils.clamp(pos.x, -14, 14);
-    pos.z = THREE.MathUtils.clamp(pos.z, -14, 14);
-  });
-
-  // Visual status light color
-  const eyeColor = useMemo(() => {
-    if (straightLineMode.current && confidence > 0.6) {
-      return '#00ffff'; // Cyan - STRAIGHT LINE MODE
-    }
-    switch (action) {
-        case ActionType.FORWARD: return '#00ff00'; // Green - CHARGE
-        case ActionType.STOP: return '#ff0000'; // Red - STOP
-        case ActionType.SCAN: return '#ffff00'; // Yellow - SEARCHING
-        case ActionType.LEFT:
-        case ActionType.RIGHT: return '#ff00ff'; // Magenta - TRACKING
-        default: return '#00ccff'; // Cyan
-    }
-  }, [action, confidence, straightLineMode.current]);
-
-  return (
-    <group ref={groupRef}>
-      {/* Robot Body Visuals */}
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <boxGeometry args={[0.5, 0.2, 0.6]} />
-        <meshStandardMaterial color="#222" metalness={0.9} roughness={0.1} />
-      </mesh>
-      
-      {/* Wheels/Tracks representation */}
-      <mesh position={[0.3, 0.2, 0]} castShadow>
-         <boxGeometry args={[0.1, 0.2, 0.5]} />
-         <meshStandardMaterial color="#111" />
-      </mesh>
-      <mesh position={[-0.3, 0.2, 0]} castShadow>
-         <boxGeometry args={[0.1, 0.2, 0.5]} />
-         <meshStandardMaterial color="#111" />
-      </mesh>
-
-      {/* Head/Camera */}
-      <group position={[0, 0.7, 0]}>
-        <mesh castShadow>
-          <boxGeometry args={[0.3, 0.25, 0.4]} />
-          <meshStandardMaterial color="#444" />
-        </mesh>
-        
-        {/* Eye/Sensor Array - Positioned on -Z face (Front) */}
-        <mesh position={[0, 0, -0.21]}>
-           <planeGeometry args={[0.25, 0.08]} />
-           <meshBasicMaterial color={eyeColor} toneMapped={false} />
-        </mesh>
-        
-        {/* Antenna on top */}
-        <mesh position={[0, 0.2, 0]} castShadow>
-          <cylinderGeometry args={[0.02, 0.02, 0.3]} />
-          <meshStandardMaterial color="#00ccff" emissive="#00ccff" emissiveIntensity={0.5} />
-        </mesh>
-        <mesh position={[0, 0.35, 0]} castShadow>
-          <sphereGeometry args={[0.04, 16, 16]} />
-          <meshStandardMaterial color="#00ffff" emissive="#00ffff" emissiveIntensity={1.0} />
-        </mesh>
-        
-      {/* Stereo Vision Cameras */}
-      {/* Left Camera */}
-      <PerspectiveCamera 
-          ref={leftCamRef} 
-          makeDefault={false}
-          position={[-0.1, 0, -0.2]} // 10cm left of center
-          rotation={[0, 0, 0]} 
-          fov={110} // Wide 110° field of view
-          near={0.1}
-          far={30}
-      />
-      
-      {/* Right Camera (for stereo) */}
-      <PerspectiveCamera 
-          ref={rightCamRef} 
-          makeDefault={false}
-          position={[0.1, 0, -0.2]} // 10cm right of center
-          rotation={[0, 0, 0]} 
-          fov={110} // Wide 110° field of view
-          near={0.1}
-          far={30}
-      />
-      </group>
-      
-      {/* Light Beams - Cosmetic search lights */}
-      <group>
-        {/* Left light beam */}
-        <mesh position={[0.2, 0.5, -0.1]} rotation={[0, Math.PI / 12, 0]}>
-          <coneGeometry args={[0.05, 0.8, 8]} />
-          <meshBasicMaterial color="#00ffff" transparent opacity={0.3} side={THREE.BackSide} />
-        </mesh>
-        <pointLight position={[0.2, 0.5, -0.1]} color="#00ffff" distance={3} intensity={0.5} />
-        
-        {/* Right light beam */}
-        <mesh position={[-0.2, 0.5, -0.1]} rotation={[0, -Math.PI / 12, 0]}>
-          <coneGeometry args={[0.05, 0.8, 8]} />
-          <meshBasicMaterial color="#00ffff" transparent opacity={0.3} side={THREE.BackSide} />
-        </mesh>
-        <pointLight position={[-0.2, 0.5, -0.1]} color="#00ffff" distance={3} intensity={0.5} />
-        
-        {/* Center forward light beam */}
-        <mesh position={[0, 0.5, -0.1]} rotation={[0, 0, 0]}>
-          <coneGeometry args={[0.06, 1.0, 8]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.2} side={THREE.BackSide} />
-        </mesh>
-        <pointLight position={[0, 0.5, -0.1]} color="#ffffff" distance={4} intensity={0.8} />
-      </group>
-    </group>
-  );
-});
-
-// Scene Manager to handle off-screen rendering for "Stereo Vision"
+// Scene Manager for stereo vision
 const SceneManager = ({ 
   isRunning, 
-  onCaptureFrame, 
-  agentAction,
+  onCaptureFrame,
   leftCamRef,
   rightCamRef
 }: { 
   isRunning: boolean; 
   onCaptureFrame: (leftImage: string, rightImage: string) => void;
-  agentAction: ActionType;
   leftCamRef: React.MutableRefObject<THREE.Camera | null>;
   rightCamRef: React.MutableRefObject<THREE.Camera | null>;
 }) => {
   const { gl, scene } = useThree();
-  
-  // We need two render targets for stereo vision
-  const leftRenderTarget = useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
-  const rightRenderTarget = useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
-  
-  // Ref to throttle vision capture
-  const lastCaptureTime = useRef(0);
-  const CAPTURE_INTERVAL = 600; // 600ms capture rate for better responsiveness
+  const leftRenderTarget = React.useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
+  const rightRenderTarget = React.useMemo(() => new THREE.WebGLRenderTarget(512, 512), []);
+  const lastCaptureTime = React.useRef(0);
+  const CAPTURE_INTERVAL = 600;
 
   useFrame((state) => {
-    if (!isRunning || !leftCamRef.current || !rightCamRef.current) return;
+    if (!isRunning) {
+      console.log('SceneManager: Simulation not running');
+      return;
+    }
+    
+    if (!leftCamRef.current || !rightCamRef.current) {
+      console.log('SceneManager: Camera refs not ready', { 
+        leftCam: !!leftCamRef.current, 
+        rightCam: !!rightCamRef.current 
+      });
+      return;
+    }
 
     const now = state.clock.elapsedTime * 1000;
     if (now - lastCaptureTime.current > CAPTURE_INTERVAL) {
       lastCaptureTime.current = now;
+      console.log('SceneManager: Capturing stereo frames');
 
-      // 1. Save current render state
       const currentRenderTarget = gl.getRenderTarget();
       const currentXrEnabled = gl.xr.enabled;
       
-      // 2. Render Left Camera View
-      gl.xr.enabled = false;
-      gl.setRenderTarget(leftRenderTarget);
-      gl.render(scene, leftCamRef.current);
-      
-      // 3. Read left camera pixels
-      const width = leftRenderTarget.width;
-      const height = leftRenderTarget.height;
-      const leftBuffer = new Uint8Array(width * height * 4);
-      gl.readRenderTargetPixels(leftRenderTarget, 0, 0, width, height, leftBuffer);
-      
-      // 4. Render Right Camera View
-      gl.setRenderTarget(rightRenderTarget);
-      gl.render(scene, rightCamRef.current);
-      
-      // 5. Read right camera pixels
-      const rightBuffer = new Uint8Array(width * height * 4);
-      gl.readRenderTargetPixels(rightRenderTarget, 0, 0, width, height, rightBuffer);
-      
-      // 6. Convert both to Base64
-      const leftCanvas = document.createElement('canvas');
-      leftCanvas.width = width;
-      leftCanvas.height = height;
-      const leftContext = leftCanvas.getContext('2d');
-      
-      const rightCanvas = document.createElement('canvas');
-      rightCanvas.width = width;
-      rightCanvas.height = height;
-      const rightContext = rightCanvas.getContext('2d');
-      
-      if (leftContext && rightContext) {
-        // Convert left image
-        const leftImageData = leftContext.createImageData(width, height);
-        // Flip Y for WebGL -> Canvas
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const srcIdx = ((height - 1 - y) * width + x) * 4;
-                const dstIdx = (y * width + x) * 4;
-                leftImageData.data[dstIdx] = leftBuffer[srcIdx];
-                leftImageData.data[dstIdx + 1] = leftBuffer[srcIdx + 1];
-                leftImageData.data[dstIdx + 2] = leftBuffer[srcIdx + 2];
-                leftImageData.data[dstIdx + 3] = leftBuffer[srcIdx + 3];
-            }
+      try {
+        // Render Left Camera
+        gl.xr.enabled = false;
+        gl.setRenderTarget(leftRenderTarget);
+        gl.render(scene, leftCamRef.current);
+        
+        // Render Right Camera
+        gl.setRenderTarget(rightRenderTarget);
+        gl.render(scene, rightCamRef.current);
+        
+        // Read pixels from render targets and convert to data URLs
+        const readPixelsToDataURL = (renderTarget: THREE.WebGLRenderTarget): string => {
+          const width = renderTarget.width;
+          const height = renderTarget.height;
+          const buffer = new Uint8Array(width * height * 4);
+          
+          gl.readRenderTargetPixels(renderTarget, 0, 0, width, height, buffer);
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          
+          if (ctx) {
+            const imageData = ctx.createImageData(width, height);
+            imageData.data.set(buffer);
+            ctx.putImageData(imageData, 0, 0);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            console.log(`SceneManager: Generated data URL (${dataUrl.substring(0, 50)}...)`);
+            return dataUrl;
+          }
+          
+          console.log('SceneManager: Failed to get canvas context');
+          return '';
+        };
+        
+        const leftImageBase64 = readPixelsToDataURL(leftRenderTarget);
+        const rightImageBase64 = readPixelsToDataURL(rightRenderTarget);
+        
+        if (leftImageBase64 && rightImageBase64) {
+          console.log('SceneManager: Calling onCaptureFrame');
+          onCaptureFrame(leftImageBase64, rightImageBase64);
+        } else {
+          console.log('SceneManager: Failed to generate images', {
+            left: !!leftImageBase64,
+            right: !!rightImageBase64
+          });
         }
-        leftContext.putImageData(leftImageData, 0, 0);
-        
-        // Convert right image
-        const rightImageData = rightContext.createImageData(width, height);
-        // Flip Y for WebGL -> Canvas
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const srcIdx = ((height - 1 - y) * width + x) * 4;
-                const dstIdx = (y * width + x) * 4;
-                rightImageData.data[dstIdx] = rightBuffer[srcIdx];
-                rightImageData.data[dstIdx + 1] = rightBuffer[srcIdx + 1];
-                rightImageData.data[dstIdx + 2] = rightBuffer[srcIdx + 2];
-                rightImageData.data[dstIdx + 3] = rightBuffer[srcIdx + 3];
-            }
-        }
-        rightContext.putImageData(rightImageData, 0, 0);
-        
-        // High quality jpeg for vision model
-        const leftImageBase64 = leftCanvas.toDataURL('image/jpeg', 0.8);
-        const rightImageBase64 = rightCanvas.toDataURL('image/jpeg', 0.8);
-        
-        onCaptureFrame(leftImageBase64, rightImageBase64);
+      } catch (error) {
+        console.error('SceneManager: Error capturing frames:', error);
+      } finally {
+        gl.setRenderTarget(currentRenderTarget);
+        gl.xr.enabled = currentXrEnabled;
       }
-
-      // 7. Restore state
-      gl.setRenderTarget(currentRenderTarget);
-      gl.xr.enabled = currentXrEnabled;
     }
   });
 
   return null;
 };
 
-// Simple orbit controls wrapper
+// Orbit Controls wrapper
 const OrbitControlsWrapper = () => {
-    return <OrbitControls makeDefault />;
-}
+  return <OrbitControls makeDefault />;
+};
 
-// Agent position context to share agent position with targets
+// Agent position context
 const AgentPositionContext = React.createContext<[number, number, number] | null>(null);
 
+// Main Simulation World component
 const SimulationWorldInner: React.FC<SimulationWorldProps & { 
   leftCamRef: React.RefObject<THREE.Camera | null>;
   rightCamRef: React.RefObject<THREE.Camera | null>;
 }> = (props) => {
   const agentGroupRef = useRef<THREE.Group>(null);
+  const agentLeftCamRef = useRef<THREE.PerspectiveCamera>(null);
+  const agentRightCamRef = useRef<THREE.PerspectiveCamera>(null);
   const [agentPosition, setAgentPosition] = useState<[number, number, number]>([0, 0, 0]);
   const [destroyedTargets, setDestroyedTargets] = useState<Set<string>>(new Set());
 
@@ -652,22 +350,36 @@ const SimulationWorldInner: React.FC<SimulationWorldProps & {
 
   // Check if target is mentioned in chat to respawn it
   useEffect(() => {
-    // When target changes (via chat), check if it's destroyed and respawn it
     if (props.target && destroyedTargets.has(props.target)) {
-      // Respawn this target
       setDestroyedTargets(prev => {
         const newSet = new Set(prev);
         newSet.delete(props.target);
         return newSet;
       });
-      // Reduced logging for performance
     }
   }, [props.target, destroyedTargets]);
 
   const handleTargetReached = (targetType: string) => {
-    // Mark target as destroyed
     setDestroyedTargets(prev => new Set(prev).add(targetType));
-    // Reduced logging for performance
+  };
+
+  // Update camera refs when agent updates them
+  const handleCameraUpdate = (leftCam: THREE.Camera, rightCam: THREE.Camera, useRearView: boolean) => {
+    props.leftCamRef.current = leftCam;
+    props.rightCamRef.current = rightCam;
+    
+    // Also update agent camera refs for stereo vision
+    if (leftCam instanceof THREE.PerspectiveCamera) {
+      agentLeftCamRef.current = leftCam;
+    }
+    if (rightCam instanceof THREE.PerspectiveCamera) {
+      agentRightCamRef.current = rightCam;
+    }
+    
+    // Notify parent about camera view change
+    if (props.onCameraViewChange) {
+      props.onCameraViewChange(useRearView);
+    }
   };
 
   return (
@@ -687,16 +399,16 @@ const SimulationWorldInner: React.FC<SimulationWorldProps & {
       {/* Environment */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
         <planeGeometry args={[50, 50]} />
-        <primitive object={floorMaterial} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.8} metalness={0.2} />
       </mesh>
       <Grid infiniteGrid sectionSize={3} cellColor="#444" sectionColor="#00ccff" fadeDistance={30} />
 
+      {/* Wall with gap */}
+      <WallWithGap />
+
       {/* Targets */}
       {targets.map((t, i) => {
-        // Skip destroyed targets
-        if (destroyedTargets.has(t.type)) {
-          return null;
-        }
+        if (destroyedTargets.has(t.type)) return null;
         return (
           <TargetObject 
             key={i} 
@@ -713,10 +425,7 @@ const SimulationWorldInner: React.FC<SimulationWorldProps & {
       <Agent 
         ref={agentGroupRef}
         action={props.agentAction} 
-        onUpdateCamera={(leftCam, rightCam) => { 
-          props.leftCamRef.current = leftCam;
-          props.rightCamRef.current = rightCam;
-        }}
+        onUpdateCamera={handleCameraUpdate}
         targetPosition={targets.find(t => t.type === props.target && !destroyedTargets.has(t.type))?.position as [number, number, number] || null}
         confidence={props.confidence || 0.0}
       />
@@ -725,9 +434,8 @@ const SimulationWorldInner: React.FC<SimulationWorldProps & {
       <SceneManager 
         isRunning={props.isRunning} 
         onCaptureFrame={props.onCaptureFrame}
-        agentAction={props.agentAction}
-        leftCamRef={props.leftCamRef}
-        rightCamRef={props.rightCamRef}
+        leftCamRef={agentLeftCamRef}
+        rightCamRef={agentRightCamRef}
       />
     </AgentPositionContext.Provider>
   );
